@@ -1,0 +1,330 @@
+
+
+#include "ns3/node.h"
+
+#include "ns3/packet.h"
+
+#include "ns3/command-line.h"
+
+#include "ns3/simulator.h"
+
+#include "ns3/node-container.h"
+
+#include "ns3/net-device-container.h"
+
+#include "ns3/yans-wifi-helper.h"
+
+#include "ns3/mobility-helper.h"
+
+#include "ns3/seq-ts-header.h"
+
+#include "ns3/wave-net-device.h"
+
+#include "ns3/wave-mac-helper.h"
+
+#include "ns3/wave-helper.h"
+
+#include "ns3/netanim-module.h"
+
+#include <iostream>
+
+#include <stdio.h>
+
+#include "ns3/log.h"
+
+#include <fstream>
+
+#include <sstream>
+
+#include "ns3/core-module.h"
+
+#include "ns3/mobility-module.h"
+
+#include "ns3/network-module.h"
+
+#include <string>
+
+using namespace ns3;
+
+using namespace std;
+
+
+
+class subeacon80
+
+{
+
+public:
+
+  void SendWsmpExample (uint32_t pktCount,uint32_t interval,uint32_t numnodes);
+
+
+
+private:
+ void CreateWaveNodes(uint32_t numnodes);   
+
+ void SendOneWsmpPacket  (uint32_t channel , int32_t seqID,int32_t nodeID);
+
+ bool Receive (Ptr<NetDevice> dev, Ptr<const Packet> pkt,  uint16_t mode,const Address &sender);
+
+ NodeContainer nodes;   //节点容器，通过 NodeContainer 类创建nodes对象,声明了一个名为”nodes”的NodeContainer//
+
+ NetDeviceContainer devices;  //将创建的网络设备关联到前面创建的节点当中,使用一个NetDeviceContainer对象来存放需要所有被创建的NetDevice对象//
+
+ std::ofstream delayLog; //写操作，延迟数据日志
+
+};
+
+
+
+void
+
+subeacon80::CreateWaveNodes (uint32_t numnodes)  //wave是802.11中一项无线通讯技术
+
+{
+
+  bool verbose = false;   //冗长的//
+
+  nodes = NodeContainer ();   /* construct function for class Nodecontainer 创建一个空的节点容器*/
+
+  nodes.Create (numnodes);   //调用了nodes对象的Create()方法创建了节点//
+
+  MobilityHelper mobility1; //调e用MobinlityHe'jlper 生成mobility对象//
+
+  mobility1.SetPositionAllocator ("ns3::RandomRectanglePositionAllocator","X", StringValue ("ns3::UniformRandomVariable[Min=0.0|Max=1500.0]"),"Y", StringValue ("ns3::UniformRandomVariable[Min=0.0|Max=50.0]"));
+
+  mobility1.SetMobilityModel ("ns3::ConstantPositionMobilityModel");  //静止模型,或者RandomWalk2dMobilityModel，为NS3自带的2d运动模型，bounds属性为设置节点移动的边界mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel","Bounds", RectangleValue (Rectangle (-50, 50, -50, 50)));//
+
+  for (uint32_t i = 0; i <numnodes; ++i)
+
+  {
+
+   mobility1.Install (nodes.Get(i));   //将移动模型绑定在到节点对象上//
+
+  }
+
+/* configure 802.11p PHY */
+
+    YansWifiChannelHelper waveChannel = YansWifiChannelHelper::Default ();  ////使用默认的信道模型
+
+    YansWavePhyHelper wavePhy =  YansWavePhyHelper::Default ();  //使用默认wavephy模型//
+
+    wavePhy.SetChannel (waveChannel.Create ());  //创建通道对象，并关联到物理层对象管理器
+
+    wavePhy.SetPcapDataLinkType (YansWifiPhyHelper::DLT_IEEE802_11);
+
+/* configure 802.11p MAC */
+    QosWaveMacHelper waveMac = QosWaveMacHelper::Default (); //或者nqoswacehelper
+
+    WaveHelper waveHelper = WaveHelper::Default ();
+
+/* install device*/
+
+    devices = waveHelper.Install (wavePhy, waveMac, nodes);
+
+
+/* print position info to log file*/
+    std::string sfile;    //创建字符sfile
+
+    sfile = "/home/xys/NS3/position1500mNrSampel.csv";
+
+    for (uint32_t q = 0; q < numnodes; q++)
+
+    {
+
+      uint32_t nodeId = nodes.Get(q)->GetId ();  //节点地址node id,A->B是提取A中的成员B，A只能是指向类、结构、联合的指针
+
+      Ptr<MobilityModel> mobModel = nodes.Get(q)->GetObject<MobilityModel> ();
+
+      Vector3D pos = mobModel->GetPosition ();
+
+      delayLog.open( sfile.c_str(), std::ios::app);  //以ios::app打开文件，如果没有生成新文件//
+
+      delayLog <<std::endl<<nodeId<<","<<  pos.x<<","<<pos.y <<","<< pos.z<<",";
+
+      delayLog.close();
+
+    }
+
+
+    if (verbose)
+
+    {
+
+      waveHelper.EnableLogComponents();      // Turn on all Wifi 802.11p logging
+
+    }
+
+  }
+
+
+
+
+// SendoneWsmpPacket
+
+  void
+
+  subeacon80::SendOneWsmpPacket  (uint32_t channel, int32_t seqID,int32_t nodeID) //seq生成一系列数字
+
+  {
+
+    Ptr<WaveNetDevice>  sender = DynamicCast<WaveNetDevice> (devices.Get (nodeID));
+
+    const static uint16_t WSMP_PROT_NUMBER = 0x88DC;  //静态全局变量
+
+    Mac48Address bssWildcard = Mac48Address::GetBroadcast (); //广播，boardcast返回广播地址
+
+    const TxInfo txInfo = TxInfo (channel);
+
+    Ptr<Packet> p  = Create<Packet> (450);   //packet创建对象p
+
+    SeqTsHeader seqTs;   //Packet header for UDP client/server application.，tcp提供错误检查，upd不停发包
+
+    seqTs.SetSeq (seqID);
+
+    p->AddHeader (seqTs);
+
+    Time timeNow = Simulator::Now();
+
+    int64_t timeNow_ms = timeNow.GetMicroSeconds();
+
+    uint32_t pakid = p->GetUid();
+    
+    sender->SendX  (p, bssWildcard, WSMP_PROT_NUMBER, txInfo);
+
+    std::string sfile;
+
+    sfile = "/home/xys/NS3/sending1500mNrSampel.csv";
+
+    delayLog.open( sfile.c_str(), std::ios::app);
+
+    delayLog <<std::endl<<timeNow_ms<<","<< nodeID<<","<<pakid<<",";
+
+    delayLog.close();
+
+
+  }
+
+
+
+// Receive
+
+
+
+  bool
+
+  subeacon80::Receive (Ptr<NetDevice> dev, Ptr<const Packet> pkt,  uint16_t mode, const Address &sender)
+
+  {
+
+    SeqTsHeader seqTs;
+
+    pkt->PeekHeader (seqTs);
+
+    Time timeNow = Simulator::Now();
+
+    int64_t timeNow_ms = timeNow.GetMicroSeconds(); //在指定单元里得到一个所举例子中存储时间的近似值
+
+    uint32_t pakid = pkt->GetUid();
+
+    int64_t timeSend_ms = seqTs.GetTs ().GetMicroSeconds ();
+
+    int64_t Delay_ms =  timeNow_ms - timeSend_ms - 692;
+
+    std::string sfile;
+
+    sfile = "/home/xys/NS3/receivin1500mNrSampel.csv";
+
+    delayLog.open( sfile.c_str(), std::ios::app);
+
+    delayLog<<std::endl << pakid << ","<< timeSend_ms << "," << timeNow_ms << "," << Delay_ms<< ",";
+
+    delayLog.close();
+
+
+
+    return true;
+
+  }
+
+
+
+
+
+//sendWsmpExample
+
+  void
+
+  subeacon80::SendWsmpExample (uint32_t pktCount,uint32_t interval,uint32_t numnodes)
+
+  {
+
+    CreateWaveNodes (numnodes);
+
+    Ptr<WaveNetDevice>  receiver = DynamicCast<WaveNetDevice> (devices.Get (0));
+
+    uint32_t nodeID;
+
+
+    for (nodeID = 1; nodeID < numnodes; nodeID++)
+
+    {
+
+     Ptr<WaveNetDevice>  sender = DynamicCast<WaveNetDevice> (devices.Get (nodeID));
+
+     RngSeedManager::SetSeed (nodeID);
+
+     Ptr<UniformRandomVariable> x = CreateObject<UniformRandomVariable> ();
+
+
+     for(uint16_t seqID=1; seqID <= pktCount; seqID++)
+
+     {
+
+      uint32_t startTime = x->GetInteger (1,interval)+ interval*(seqID-1);
+
+      Simulator::Schedule (MicroSeconds(startTime), &subeacon80::SendOneWsmpPacket, this, CCH, seqID,nodeID);
+
+      receiver->SetReceiveCallback (MakeCallback (&subeacon80::Receive, this));
+     }
+
+  }
+
+  Simulator::Stop (Seconds (1000.0));
+
+  Simulator::Run ();
+
+  Simulator::Destroy ();
+
+}
+
+
+
+
+int
+
+main (int argc, char *argv[])
+
+{
+
+  std::ofstream delayLog;
+
+  uint32_t numPackets = 1;
+  uint32_t packetSize = 450;
+  uint32_t interval = 100000;
+  uint32_t numnodes = 10;
+
+  CommandLine cmd;
+
+  NodeContainer nodes;
+
+  NetDeviceContainer devices;
+
+  subeacon80 example;
+
+  example.SendWsmpExample  (numPackets, interval,numnodes);
+
+
+ return 0;
+
+}
